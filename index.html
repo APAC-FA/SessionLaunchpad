@@ -42,7 +42,10 @@ body{
 button,input,select{font-family:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-.app{max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+.app{max-width:640px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
+.col{display:flex;flex-direction:column;gap:20px;min-width:0}
+@media (min-width:880px){.app{max-width:1180px;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:40px;align-items:start}}
+@media (min-width:1280px){.app{max-width:1360px}}
 
 /* header */
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px}
@@ -57,7 +60,7 @@ button,input,select{font-family:inherit}
 .sw[aria-checked="true"]::after{transform:translateX(18px);background:var(--accent)}
 
 /* flip clock */
-.clock{display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,3vw,16px);perspective:900px}
+.clock{display:grid;grid-template-columns:1fr 1fr;gap:clamp(8px,2vw,16px);perspective:900px;width:100%;max-width:min(100%,66vh);max-width:min(100%,66dvh);margin-inline:auto}
 .tile{
   position:relative;container-type:inline-size;aspect-ratio:5/6;border-radius:18px;overflow:hidden;
   background:linear-gradient(to bottom,var(--tile-top) 50%,var(--tile-bot) 50%);
@@ -70,8 +73,8 @@ button,input,select{font-family:inherit}
 }
 .digits.flip{animation:flip .36s ease-out}
 @keyframes flip{0%{transform:rotateX(-78deg);opacity:.25}100%{transform:none;opacity:1}}
-.corner{position:absolute;font-size:13px;font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums;z-index:1}
-.tl{top:12px;left:14px}.tr{top:12px;right:14px}.bl{bottom:12px;left:14px}.br{bottom:12px;right:14px}
+.corner{position:absolute;font-size:13px;font-size:clamp(10px,7cqw,17px);font-weight:500;color:var(--muted);font-variant-numeric:tabular-nums;z-index:1}
+.tl{top:clamp(8px,6cqw,14px);left:clamp(9px,7cqw,16px)}.tr{top:clamp(8px,6cqw,14px);right:clamp(9px,7cqw,16px)}.bl{bottom:clamp(8px,6cqw,14px);left:clamp(9px,7cqw,16px)}.br{bottom:clamp(8px,6cqw,14px);right:clamp(9px,7cqw,16px)}
 .next{text-align:center;color:var(--muted);font-size:18px;line-height:1.35;min-height:25px;overflow-wrap:anywhere}
 .next b{color:var(--fg);font-weight:600;font-size:21px}
 
@@ -102,7 +105,7 @@ input[type=text],input[type=time],select{
   font-size:16px;color:var(--fg);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;
   padding:10px 12px;min-height:44px;width:100%;min-width:0;
 }
-.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:14px}
 .tonerow{display:flex;gap:8px}
 .chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:8px}
 .chip{
@@ -167,6 +170,7 @@ input[type=text],input[type=time],select{
 </style>
 
 <main class="app">
+  <div class="col">
   <header class="top">
     <div class="brand">
       <h1>Launchpad Alarm Clock</h1>
@@ -199,6 +203,8 @@ input[type=text],input[type=time],select{
     </button>
   </div>
 
+  </div>
+  <div class="col">
   <section class="panel" id="panel" aria-label="New alarm" hidden>
     <div class="field">
       <span class="lbl" id="shiftLbl">Shift</span>
@@ -254,6 +260,7 @@ input[type=text],input[type=time],select{
     <ul id="alarms"></ul>
   </section>
   <p class="foot">Alarms ring while this page is open. Times follow UTC+8.</p>
+  </div>
 </main>
 
 <div class="ring" id="ring" hidden role="alertdialog" aria-label="Alarm ringing">
