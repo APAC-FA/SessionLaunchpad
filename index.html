@@ -405,8 +405,16 @@ function playSoftBell(){
     if(p&&p.catch)p.catch(function(){});
   }catch(e){softBellFallback();}
 }
+function stopSound(){
+  if(!ctx||!master)return;
+  var old=master,now=ctx.currentTime;
+  try{old.gain.cancelScheduledValues(now);old.gain.setValueAtTime(old.gain.value,now);old.gain.linearRampToValueAtTime(0.0001,now+0.08);}catch(e){}
+  setTimeout(function(){try{old.disconnect();}catch(e){}},250);
+  master=ctx.createGain();master.gain.value=volGain();master.connect(ctx.destination);
+}
 function playTone(id){
   var c=ensureAudio();if(!c)return;
+  stopSound();
   if(id==='custom'){playCustom(c,function(){playBuiltIn(c,'chime');});return;}
   playBuiltIn(c,id);
 }
@@ -646,7 +654,7 @@ function saveAlarmsFromForm(){
 var ringing=[],snoozes=[],ringTimer=null;
 function showRing(){
   var top=ringing[0];
-  if(!top){$('ring').hidden=true;clearInterval(ringTimer);ringTimer=null;document.title='Launchpad Alarm Clock';return;}
+  if(!top){$('ring').hidden=true;clearInterval(ringTimer);ringTimer=null;stopSound();document.title='Launchpad Alarm Clock';return;}
   var a=top.a;
   $('ring').hidden=false;
   $('ringKick').textContent=top.snoozed?'Snoozed alarm':a.session!=null?'Launch now':'Alarm';
@@ -769,10 +777,14 @@ $('custom').addEventListener('input',renderPanel);
 $('preview').addEventListener('click',function(){playTone($('tone').value);});
 $('tone').addEventListener('change',function(){playTone(this.value);});
 $('save').addEventListener('click',saveAlarmsFromForm);
-$('dismiss').addEventListener('click',function(){ringing.shift();showRing();});
+$('dismiss').addEventListener('click',function(){
+  ringing.shift();stopSound();showRing();
+  if(ringing[0])playTone(ringing[0].a.tone);
+});
 $('snooze').addEventListener('click',function(){
   var r=ringing.shift();if(r)snoozes.push({a:r.a,at:Date.now()+300000});
-  showRing();toast('Snoozed for 5 minutes');
+  stopSound();showRing();toast('Snoozed for 5 minutes');
+  if(ringing[0])playTone(ringing[0].a.tone);
 });
 function arm(){ensureAudio();setTimeout(updateArm,60);syncWake();}
 document.addEventListener('pointerdown',arm,{passive:true});
