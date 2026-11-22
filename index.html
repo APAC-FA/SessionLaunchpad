@@ -136,6 +136,7 @@ input[type=text],input[type=time],select{
   background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;
 }
 .alarm.off{opacity:.6}
+.divider{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:10px 2px 0}
 .a-time{grid-area:time;font-family:var(--font-num);font-size:28px;font-weight:500;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}
 .a-time small{font-size:13px;color:var(--muted);margin-left:4px;font-weight:500}
 .a-body{grid-area:body;min-width:0;display:flex;flex-direction:column;gap:2px}
@@ -243,7 +244,7 @@ input[type=text],input[type=time],select{
     </div>
     <div class="row">
       <div class="field"><label for="exam">Exam type</label><input type="text" id="exam" list="examList" maxlength="60" placeholder="Type the exam name" autocomplete="off"><datalist id="examList"></datalist></div>
-      <div class="field"><label for="note">Label or note</label><input type="text" id="note" maxlength="80" placeholder="e.g. 60 mins or the number of sessions" autocomplete="off"></div>
+      <div class="field"><label for="note">Label or note</label><input type="text" id="note" maxlength="80" placeholder="e.g. 60 mins |2 sessions" autocomplete="off"></div>
     </div>
     <div class="field" id="detailsWrap" hidden>
       <span class="lbl">Details for each session</span>
@@ -479,14 +480,15 @@ function updateArm(){
 }
 
 /* ---------- screen wake lock ---------- */
-var wl=null;
+var wl=null,wlPending=false;
 function syncWake(){
   try{
     var want=settings.wake&&alarms.some(function(a){return a.on;})&&document.visibilityState==='visible';
-    if(want&&!wl&&navigator.wakeLock){
-      navigator.wakeLock.request('screen').then(function(l){wl=l;l.addEventListener('release',function(){wl=null;});}).catch(function(){wl=null;});
+    if(want&&!wl&&!wlPending&&navigator.wakeLock){
+      wlPending=true;
+      navigator.wakeLock.request('screen').then(function(l){wlPending=false;wl=l;l.addEventListener('release',function(){wl=null;});}).catch(function(){wlPending=false;wl=null;});
     }else if(!want&&wl){wl.release();wl=null;}
-  }catch(e){wl=null;}
+  }catch(e){wl=null;wlPending=false;}
 }
 
 /* ---------- alarm math ---------- */
@@ -504,7 +506,7 @@ function whenText(a,n){
 }
 function armLast(a){
   var n=now(),d=((n.h*60+n.m)-a.min+1440)%1440;
-  a.last=d<=1?n.dateKey+'|'+a.min:null;
+  a.lastRing=d<=1?Math.floor(Date.now()/60000)-d:null;
 }
 
 /* ---------- clock render ---------- */
@@ -536,7 +538,18 @@ var editing=null,draft=null;
 function renderList(){
   var n=now(),ul=$('alarms');ul.textContent='';
   $('empty').hidden=alarms.length>0;
-  alarms.slice().sort(function(a,b){return a.min-b.min;}).forEach(function(a){
+  var ordered=alarms.slice().sort(function(a,b){
+    if(a.on!==b.on)return a.on?-1:1;
+    if(a.on)return until(a,n).mins-until(b,n).mins;
+    return a.min-b.min;
+  });
+  var hasActive=ordered.some(function(a){return a.on;}),dividerShown=false;
+  ordered.forEach(function(a){
+    if(!a.on&&!dividerShown){
+      dividerShown=true;
+      var dv=el('li','divider','Completed and off');
+      ul.appendChild(dv);
+    }
     var li=el('li','alarm'+(a.on?'':' off'));
     var p=parts(a.min),time=el('div','a-time',p[0]);
     if(p[1])time.appendChild(el('small','',p[1]));
@@ -675,14 +688,18 @@ function checkAlarms(n){
     if(!a.on)return;
     var d=(nowMin-a.min+1440)%1440;if(d>1)return;
     if(a.repeat==='weekdays'&&!isWeekday(d===1&&nowMin<a.min?(n.dow+6)%7:n.dow))return;
-    var key=n.dateKey+'|'+a.min;if(a.last===key)return;
-    a.last=key;if(a.repeat==='once')a.on=false;fired=true;ring(a);
+    var stamp=Math.floor(Date.now()/60000)-d;if(a.lastRing===stamp)return;
+    a.lastRing=stamp;if(a.repeat==='once')a.on=false;fired=true;ring(a);
   });
   if(fired){saveAlarms();renderList();syncWake();}
 }
 function checkTimers(){
   var t=Date.now();
-  snoozes=snoozes.filter(function(s){if(t>=s.at){ring(s.a,true);return false;}return true;});
+  snoozes=snoozes.filter(function(s){
+    if(t<s.at)return true;
+    if(alarms.some(function(x){return x.id===s.a.id;}))ring(s.a,true);
+    return false;
+  });
   var before=ringing.length;
   ringing=ringing.filter(function(r){return t-r.t<300000;});
   if(ringing.length!==before)showRing();
