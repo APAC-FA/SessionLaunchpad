@@ -310,8 +310,8 @@ function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=c
 
 /* ---------- time in UTC+8 ---------- */
 var dtf=new Intl.DateTimeFormat('en-US',{timeZone:TZ,hourCycle:'h23',year:'numeric',month:'short',day:'2-digit',weekday:'long',hour:'2-digit',minute:'2-digit',second:'2-digit'});
-function now(){
-  var p={},parts=dtf.formatToParts(new Date());
+function now(ms){
+  var p={},parts=dtf.formatToParts(ms==null?new Date():new Date(ms));
   for(var i=0;i<parts.length;i++)p[parts[i].type]=parts[i].value;
   return {h:parseInt(p.hour,10)%24,m:parseInt(p.minute,10),s:parseInt(p.second,10),mon:p.month,day:p.day,weekday:p.weekday,dow:DAYS.indexOf(p.weekday),dateKey:p.year+'-'+p.month+'-'+p.day};
 }
@@ -396,15 +396,29 @@ function startSoftBell(buf){
   var c=ctx,t=c.currentTime+0.05,src=c.createBufferSource(),g=c.createGain();
   src.buffer=buf;g.gain.value=0.8;src.connect(g);g.connect(master);src.start(t);
 }
-function playSoftBell(){
-  var c=ctx;if(!c)return;
-  if(softBuf){startSoftBell(softBuf);return;}
+var softBusy=false,softWaiting=false;
+function decodeSoftBell(){
+  var c=ctx;if(!c||softBuf||softBusy)return;
+  softBusy=true;
   try{
     var bin=atob(window.SOFT_BELL_B64||''),bytes=new Uint8Array(bin.length);
     for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-    var p=c.decodeAudioData(bytes.buffer,function(b){softBuf=b;startSoftBell(b);},softBellFallback);
+    var done=function(b){softBusy=false;softBuf=b;if(softWaiting){softWaiting=false;startSoftBell(b);}};
+    var fail=function(){softBusy=false;if(softWaiting){softWaiting=false;softBellFallback();}};
+    var p=c.decodeAudioData(bytes.buffer,done,fail);
     if(p&&p.catch)p.catch(function(){});
-  }catch(e){softBellFallback();}
+  }catch(e){softBusy=false;if(softWaiting){softWaiting=false;softBellFallback();}}
+}
+function playSoftBell(){
+  var c=ctx;if(!c)return;
+  if(softBuf){startSoftBell(softBuf);return;}
+  softWaiting=true;decodeSoftBell();
+}
+/* decode sounds ahead of time so the alarm starts the moment it is due */
+function prewarmSounds(){
+  if(!ctx)return;
+  decodeSoftBell();
+  if(custom&&!customBuf)getCustomBuffer(ctx).catch(function(){});
 }
 function stopSound(){
   if(!ctx||!master)return;
@@ -505,8 +519,8 @@ function whenText(a,n){
   return day+' · in '+durText(u.mins);
 }
 function armLast(a){
-  var n=now(),d=((n.h*60+n.m)-a.min+1440)%1440;
-  a.lastRing=d<=1?Math.floor(Date.now()/60000)-d:null;
+  var nowMin=Math.floor(Date.now()/60000),d=((((nowMin+480)%1440)+1440)%1440-a.min+1440)%1440;
+  a.lastRing=d<=1?nowMin-d:null;
 }
 
 /* ---------- clock render ---------- */
@@ -670,7 +684,7 @@ function showRing(){
   if(!top){$('ring').hidden=true;clearInterval(ringTimer);ringTimer=null;stopSound();document.title='Launchpad Alarm Clock';return;}
   var a=top.a;
   $('ring').hidden=false;
-  $('ringKick').textContent=top.snoozed?'Snoozed alarm':a.session!=null?'Launch now':'Alarm';
+  $('ringKick').textContent=top.snoozed?'Snoozed alarm':top.late>=2?'Missed alarm · '+top.late+' min ago':a.session!=null?'Launch now':'Alarm';
   $('ringMore').textContent=ringing.length>1?'+'+(ringing.length-1)+' more':'';
   $('ringTime').textContent=fmtMin(a.min);
   $('ringTitle').textContent=a.exam||'Session launch';
@@ -678,19 +692,29 @@ function showRing(){
   document.title='Ringing · '+(a.exam||'Session launch');
   if(!ringTimer){playTone(a.tone);ringTimer=setInterval(function(){if(ringing[0])playTone(ringing[0].a.tone);},9000);}
 }
-function ring(a,snoozed){
+function ring(a,snoozed,late){
   if(ringing.some(function(r){return r.a.id===a.id;}))return;
-  ringing.push({a:a,t:Date.now(),snoozed:!!snoozed});showRing();
+  ringing.push({a:a,t:Date.now(),snoozed:!!snoozed,late:late||0});showRing();
 }
-function checkAlarms(n){
-  var nowMin=n.h*60+n.m,fired=false;
+/* Alarm check. Works in whole minutes since 1970 (UTC+8 is a whole-hour offset), so it
+   cannot disagree with itself at a minute boundary, and it also catches up on any alarm
+   that came due while the tab was throttled or the device was asleep (up to 30 min). */
+var lastCheckMin=null;
+function checkAlarms(ms){
+  var nowMin=Math.floor(ms/60000),prev=lastCheckMin===null?nowMin-2:lastCheckMin,fired=false;
+  var mod=((nowMin+480)%1440+1440)%1440;
   alarms.forEach(function(a){
     if(!a.on)return;
-    var d=(nowMin-a.min+1440)%1440;if(d>1)return;
-    if(a.repeat==='weekdays'&&!isWeekday(d===1&&nowMin<a.min?(n.dow+6)%7:n.dow))return;
-    var stamp=Math.floor(Date.now()/60000)-d;if(a.lastRing===stamp)return;
-    a.lastRing=stamp;if(a.repeat==='once')a.on=false;fired=true;ring(a);
+    var d=(mod-a.min+1440)%1440,stamp=nowMin-d;
+    if(stamp<=prev||a.lastRing===stamp)return;
+    var dow=(Math.floor((stamp+480)/1440)+4)%7;
+    if(a.repeat==='weekdays'&&!isWeekday(dow))return;
+    a.lastRing=stamp;
+    if(a.repeat==='once')a.on=false;
+    fired=true;
+    if(d<=30)ring(a,false,d);
   });
+  lastCheckMin=nowMin;
   if(fired){saveAlarms();renderList();syncWake();}
 }
 function checkTimers(){
@@ -706,14 +730,19 @@ function checkTimers(){
 }
 
 /* ---------- main tick ---------- */
+var lastSec=-1;
 function tick(){
-  var n=now();renderClock(n);
+  var ms=Date.now();
+  checkAlarms(ms);checkTimers();           /* alarms first, so nothing waits on drawing */
+  var n=now(ms);
+  if(n.s===lastSec&&n.m===lastMinute)return;
+  lastSec=n.s;renderClock(n);
   if(n.m!==lastMinute){
     lastMinute=n.m;if(editing===null)renderList();
     var h=n.h,ap='';if(settings.fmt==='12'){ap=h>=12?' PM':' AM';h=h%12||12;}
     $('srTime').textContent='Current time '+pad(h)+':'+pad(n.m)+ap+', '+n.weekday+' '+n.mon+' '+n.day;
   }
-  updateNext(n);checkAlarms(n);checkTimers();
+  updateNext(n);
 }
 function refreshAll(){
   $('f12').setAttribute('aria-pressed',String(settings.fmt==='12'));
@@ -803,7 +832,7 @@ $('snooze').addEventListener('click',function(){
   stopSound();showRing();toast('Snoozed for 5 minutes');
   if(ringing[0])playTone(ringing[0].a.tone);
 });
-function arm(){ensureAudio();setTimeout(updateArm,60);syncWake();}
+function arm(){ensureAudio();setTimeout(updateArm,60);syncWake();prewarmSounds();}
 document.addEventListener('pointerdown',arm,{passive:true});
 document.addEventListener('keydown',arm);
 document.addEventListener('visibilitychange',function(){tick();syncWake();});
@@ -813,6 +842,13 @@ $('panel').hidden=alarms.length>0;
 $('addBtn').setAttribute('aria-expanded',String(alarms.length===0));
 if(alarms.length===0)renderPanel();
 refreshAll();updateArm();tick();
+/* A background timer in a Web Worker is not slowed down when the tab is hidden, so alarms
+   stay on time. The ordinary timer remains as a backup; the check never fires twice. */
+try{
+  var tickWorker=new Worker(URL.createObjectURL(new Blob(['setInterval(function(){postMessage(0)},250)'],{type:'text/javascript'})));
+  tickWorker.onmessage=tick;
+  tickWorker.onerror=function(){try{tickWorker.terminate();}catch(e){}};
+}catch(e){}
 setInterval(tick,1000);
 })();
 </script>
